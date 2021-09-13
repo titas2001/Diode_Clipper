@@ -9,7 +9,7 @@
 #pragma once
 
 #include <JuceHeader.h>
-
+#include <fstream>
 //==============================================================================
 /**
 */
@@ -69,11 +69,12 @@ private:
     double Id, C, Ve, Vp, R, err;
     double Fs, T;
     double vNom, vDenom;
-    float vin;
-    float vout, voutTemp, voutOld;
-
-    int upsamplingScale;
-
+    double vin;
+    double vout, voutTemp, voutOld;
+    std::ofstream myfile;
+    int oversample;
+    std::vector<float> blockInput, blockOutput, blockOutputDownsampled;
+    float oldBlockOutput;
     juce::dsp::ProcessorDuplicator< juce::dsp::IIR::Filter <float>, juce::dsp::IIR::Coefficients<float>> lowPassFilter;
 
 

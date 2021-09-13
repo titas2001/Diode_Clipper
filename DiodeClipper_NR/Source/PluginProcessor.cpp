@@ -1,4 +1,4 @@
-/*
+﻿/*
   ==============================================================================
 
     This file contains the basic framework code for a JUCE plugin processor.
@@ -8,7 +8,7 @@
 
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
-
+#include <fstream>
 
 
 //==============================================================================
@@ -32,11 +32,13 @@ DiodeClipperNRAudioProcessor::DiodeClipperNRAudioProcessor()
     audioTree.addParameterListener("controlR_ID", this);
 
     controlledR = 1.0;
-
+    
+    myfile.open("example.csv");
 }
 
 DiodeClipperNRAudioProcessor::~DiodeClipperNRAudioProcessor()
 {
+    myfile.close();
     oversampling.reset();
 }
 
@@ -96,16 +98,9 @@ void DiodeClipperNRAudioProcessor::prepareToPlay(double sampleRate, int samplesP
 
     // Use this method as the place to do any pre-playback
     // initialisation that you need..
-    oversampling->reset();
-    oversampling->initProcessing(static_cast<size_t> (samplesPerBlock));
-
-    juce::dsp::ProcessSpec spec;
-    spec.sampleRate = sampleRate * 16;
-    spec.maximumBlockSize = samplesPerBlock * 15;
-    spec.numChannels = getTotalNumOutputChannels();
-
-    lowPassFilter.prepare(spec);
-    lowPassFilter.reset();
+    //oversampling->reset();
+    //oversampling->initProcessing(static_cast<size_t> (samplesPerBlock));
+    oversample = 16;
     // Set the constants
     Fs = sampleRate;
     T = 1 / Fs;
@@ -118,6 +113,7 @@ void DiodeClipperNRAudioProcessor::prepareToPlay(double sampleRate, int samplesP
     // set controlled values to starting values (redundant maybe delit later)
     controlledR = 1.0;
     voutOld = 0;
+    oldBlockOutput = 0;
 }
 
 void DiodeClipperNRAudioProcessor::releaseResources()
@@ -126,25 +122,40 @@ void DiodeClipperNRAudioProcessor::releaseResources()
     // spare memory, etc.
 }
 
+#ifndef JucePlugin_PreferredChannelConfigurations
 bool DiodeClipperNRAudioProcessor::isBusesLayoutSupported(const BusesLayout& layouts) const
 {
-    if (layouts.getMainInputChannelSet() == juce::AudioChannelSet::disabled()
-        || layouts.getMainOutputChannelSet() == juce::AudioChannelSet::disabled())
-        return false;
-
+#if JucePlugin_IsMidiEffect
+    juce::ignoreUnused(layouts);
+    return true;
+#else
+    // This is the place where you check if the layout is supported.
+    // In this template code we only support mono or stereo.
+    // Some plugin hosts, such as certain GarageBand versions, will only
+    // load plugins that support stereo bus layouts.
     if (layouts.getMainOutputChannelSet() != juce::AudioChannelSet::mono()
         && layouts.getMainOutputChannelSet() != juce::AudioChannelSet::stereo())
         return false;
 
-    return layouts.getMainInputChannelSet() == layouts.getMainOutputChannelSet();
-}
+    // This checks if the input layout matches the output layout
+#if ! JucePlugin_IsSynth
+    if (layouts.getMainOutputChannelSet() != layouts.getMainInputChannelSet())
+        return false;
+#endif
 
+    return true;
+#endif
+}
+#endif
 void DiodeClipperNRAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midiMessages)
 {
-    auto mainInputOutput = getBusBuffer(buffer, true, 0);
-
     auto totalNumInputChannels = getTotalNumInputChannels();
     auto totalNumOutputChannels = getTotalNumOutputChannels();
+    /***************************************************************************************/
+
+    for (int i = totalNumInputChannels; i < totalNumOutputChannels; ++i)
+        buffer.clear(i, 0, buffer.getNumSamples());
+
     /***************************************************************************************/
     // 1. Fill a new array here with upsampled input
     //      a. zeros array of size buffer*N
@@ -154,44 +165,67 @@ void DiodeClipperNRAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer
     // 4. Apply low pass again 
     // 5. For loop to downsample
 
-    //R = controlledR;
-    for (int i = totalNumInputChannels; i < totalNumOutputChannels; ++i)
-        buffer.clear(i, 0, buffer.getNumSamples());
+    blockOutput.resize(buffer.getNumSamples() * oversample, 0);
+    blockOutputDownsampled.resize(buffer.getNumSamples(), 0);
 
 
-    juce::dsp::AudioBlock<float> blockInput(buffer);
-    juce::dsp::AudioBlock<float> blockOutput = oversampling->processSamplesUp(blockInput);
-
-    updateFilter();
-    lowPassFilter.process(juce::dsp::ProcessContextReplacing<float>(blockOutput));
-    for (int channel = 0; channel < blockOutput.getNumChannels(); ++channel)
+    // Upsample and filter upsampled input
+    for (int sample = 0; sample < blockOutput.size(); ++sample)
     {
-        for (int sample = 0; sample < blockOutput.getNumSamples(); ++sample)
+        // y(i) = beta∗x(i) + (1 - beta)∗y(i - 1)
+        if (sample % oversample != 0)
         {
-            voutTemp = 1;
-            vout = 0;
-            vin = controlledR *blockOutput.getSample(channel, sample);
-            while (std::abs(voutTemp - vout) > err) {
-                voutTemp = vout;
-                vNom = T * voutTemp * R * gdExpDiff(-voutTemp) + T * R * gdExp(-voutTemp) + voutOld * R * C + T * (gdExpDiff(voutTemp) * R * voutTemp - R * gdExp(voutTemp) + vin);
-                vDenom = T * R * gdExpDiff(voutTemp) + T * R * gdExpDiff(-voutTemp) + R * C + T;
-                vout = vNom / vDenom;
-            }
-
-            voutOld = vout;
-            //vout = vin;
-            vout = limiter(vout);
-
-            blockOutput.setSample(channel, sample, vout);
+            blockOutput[sample] =  0.875 * oldBlockOutput;
+            oldBlockOutput = blockOutput[sample];
         }
+        else
+        {
+            blockOutput[sample] = 0.125 * buffer.getSample(0, sample/oversample) + 0.875 * oldBlockOutput;
+            oldBlockOutput = blockOutput[sample];
+        }
+        
     }
-    updateFilter();
-    lowPassFilter.process(juce::dsp::ProcessContextReplacing<float>(blockOutput));
+    oldBlockOutput = 0;
+    
+    // Process
+    for (int sample = 0; sample < blockOutput.size(); ++sample)
+    {
+        voutTemp = 1;
+        vout = 0;
+        vin = controlledR * blockOutput[sample];
+        //juce::Logger::getCurrentLogger()->outputDebugString("START");
+        //myfile << "0 \n";
+        int itter = 0;
+        while (std::abs(voutTemp - vout) > err || itter < 20) {
+            voutTemp = vout;
+            vNom = T * voutTemp * R * gdExpDiff(-voutTemp) + T * R * gdExp(-voutTemp) + voutOld * R * C + T * (gdExpDiff(voutTemp) * R * voutTemp - R * gdExp(voutTemp) + vin);
+            vDenom = T * R * gdExpDiff(voutTemp) + T * R * gdExpDiff(-voutTemp) + R * C + T;
+            vout = vNom / vDenom;
+            itter++;
+        }
+        //myfile << "1 \n";
+        //juce::Logger::getCurrentLogger()->outputDebugString("OUT");
+        voutOld = vout;
+        blockOutput[sample] = vin;
 
-    oversampling->processSamplesDown(blockInput);
+    }
 
-    //updateFilter(1);
-    //lowPassFilter.process(juce::dsp::ProcessContextReplacing<float>(blockOutput));
+    // Downsample and filter output from process
+    for (int sample = 0; sample < blockOutputDownsampled.size(); ++sample)
+    {
+//      y(i) = beta∗x(i) + (1 - beta)∗y(i - 1)
+        blockOutputDownsampled[sample] = 0.125 * blockOutput[sample*oversample] + 0.875 * oldBlockOutput;
+        oldBlockOutput = blockOutputDownsampled[sample];
+    }
+    oldBlockOutput = 0;
+
+    // Output to buffer
+    for (int sample = 0; sample < blockOutputDownsampled.size(); ++sample)
+    {
+        buffer.setSample(0, sample, blockOutputDownsampled[sample]);
+        buffer.setSample(1, sample, blockOutputDownsampled[sample]);
+    }
+
 }
 //==============================================================================
 bool DiodeClipperNRAudioProcessor::hasEditor() const
