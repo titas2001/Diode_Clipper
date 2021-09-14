@@ -71,6 +71,7 @@ private:
     double vNom, vDenom;
     double vin;
     double vout, voutTemp, voutOld;
+    double beta, betaM1;
     std::ofstream myfile;
     int oversample;
     std::vector<float> blockInput, blockOutput, blockOutputDownsampled;

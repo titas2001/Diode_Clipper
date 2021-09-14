@@ -114,6 +114,8 @@ void DiodeClipperNRAudioProcessor::prepareToPlay(double sampleRate, int samplesP
     controlledR = 1.0;
     voutOld = 0;
     oldBlockOutput = 0;
+    beta = 0.125;
+    betaM1 = 1 - beta;
 }
 
 void DiodeClipperNRAudioProcessor::releaseResources()
@@ -165,27 +167,39 @@ void DiodeClipperNRAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer
     // 4. Apply low pass again 
     // 5. For loop to downsample
 
+
+    blockInput.resize(buffer.getNumSamples() * oversample, 0);
     blockOutput.resize(buffer.getNumSamples() * oversample, 0);
     blockOutputDownsampled.resize(buffer.getNumSamples(), 0);
 
 
     // Upsample and filter upsampled input
-    for (int sample = 0; sample < blockOutput.size(); ++sample)
+    for (int sample = 0; sample < buffer.getNumSamples(); ++sample)
     {
         // y(i) = beta∗x(i) + (1 - beta)∗y(i - 1)
-        if (sample % oversample != 0)
+        //if (sample % oversample != 0)
+        //{
+        //    blockOutput[sample] =  betaM1 * oldBlockOutput;
+        //    oldBlockOutput = blockOutput[sample];
+        //}
+        //else
+        //{
+        
+        //blockInput[sample * oversample] = buffer.getSample(0, sample);
+        for (int i = 0; i < oversample; ++i)
         {
-            blockOutput[sample] =  0.875 * oldBlockOutput;
-            oldBlockOutput = blockOutput[sample];
-        }
-        else
-        {
-            blockOutput[sample] = 0.125 * buffer.getSample(0, sample/oversample) + 0.875 * oldBlockOutput;
-            oldBlockOutput = blockOutput[sample];
+            blockOutput[sample*oversample + i] = ((buffer.getSample(0, sample) * (16.0 - i) + buffer.getSample(0, sample + 1) * (0.0 + i) ) / 16.0);
         }
         
     }
-    oldBlockOutput = 0;
+    
+    //for (int sample = 0; sample < blockOutput.size(); ++sample)
+    //{
+    //    //      y(i) = beta∗x(i) + (1 - beta)∗y(i - 1)
+    //    blockOutput[sample] = beta * blockInput[sample] + betaM1 * oldBlockOutput;
+    //    oldBlockOutput = blockOutput[sample];
+    //}
+    //oldBlockOutput = 0;
     
     // Process
     for (int sample = 0; sample < blockOutput.size(); ++sample)
@@ -206,7 +220,8 @@ void DiodeClipperNRAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer
         //myfile << "1 \n";
         //juce::Logger::getCurrentLogger()->outputDebugString("OUT");
         voutOld = vout;
-        blockOutput[sample] = vin;
+        
+        blockOutput[sample] = limiter(vout);
 
     }
 
@@ -214,8 +229,8 @@ void DiodeClipperNRAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer
     for (int sample = 0; sample < blockOutputDownsampled.size(); ++sample)
     {
 //      y(i) = beta∗x(i) + (1 - beta)∗y(i - 1)
-        blockOutputDownsampled[sample] = 0.125 * blockOutput[sample*oversample] + 0.875 * oldBlockOutput;
-        oldBlockOutput = blockOutputDownsampled[sample];
+        blockOutputDownsampled[sample] = blockOutput[sample * oversample]; //beta * blockOutput[sample*oversample] + betaM1 * oldBlockOutput;
+        //oldBlockOutput = blockOutputDownsampled[sample];
     }
     oldBlockOutput = 0;
 
