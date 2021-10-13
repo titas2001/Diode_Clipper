@@ -17,9 +17,9 @@ DiodeClipperNRAudioProcessor::DiodeClipperNRAudioProcessor()
     : AudioProcessor(BusesProperties()
 #if ! JucePlugin_IsMidiEffect
 #if ! JucePlugin_IsSynth
-        .withInput("Input", juce::AudioChannelSet::stereo(), true)
+        .withInput("Input", juce::AudioChannelSet::mono(), true)
 #endif
-        .withOutput("Output", juce::AudioChannelSet::stereo(), true)
+        .withOutput("Output", juce::AudioChannelSet::mono(), true)
 #endif
     ),
     audioTree(*this, nullptr, juce::Identifier("PARAMETERS"),
@@ -113,7 +113,6 @@ void DiodeClipperNRAudioProcessor::prepareToPlay(double sampleRate, int samplesP
     // set controlled values to starting values (redundant maybe delit later)
     controlledR = 1.0;
     voutOld = 0;
-    oldBlockOutput = 0;
     beta = 0.125;
     betaM1 = 1 - beta;
 }
@@ -176,30 +175,13 @@ void DiodeClipperNRAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer
     // Upsample and filter upsampled input
     for (int sample = 0; sample < buffer.getNumSamples(); ++sample)
     {
-        // y(i) = beta∗x(i) + (1 - beta)∗y(i - 1)
-        //if (sample % oversample != 0)
-        //{
-        //    blockOutput[sample] =  betaM1 * oldBlockOutput;
-        //    oldBlockOutput = blockOutput[sample];
-        //}
-        //else
-        //{
         
         //blockInput[sample * oversample] = buffer.getSample(0, sample);
         for (int i = 0; i < oversample; ++i)
         {
             blockOutput[sample*oversample + i] = ((buffer.getSample(0, sample) * (16.0 - i) + buffer.getSample(0, sample + 1) * (0.0 + i) ) / 16.0);
         }
-        
     }
-    
-    //for (int sample = 0; sample < blockOutput.size(); ++sample)
-    //{
-    //    //      y(i) = beta∗x(i) + (1 - beta)∗y(i - 1)
-    //    blockOutput[sample] = beta * blockInput[sample] + betaM1 * oldBlockOutput;
-    //    oldBlockOutput = blockOutput[sample];
-    //}
-    //oldBlockOutput = 0;
     
     // Process
     for (int sample = 0; sample < blockOutput.size(); ++sample)
@@ -210,7 +192,7 @@ void DiodeClipperNRAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer
         //juce::Logger::getCurrentLogger()->outputDebugString("START");
         //myfile << "0 \n";
         int itter = 0;
-        while (std::abs(voutTemp - vout) > err || itter < 20) {
+        while (std::abs(voutTemp - vout) > err && itter < 20) {
             voutTemp = vout;
             vNom = T * voutTemp * R * gdExpDiff(-voutTemp) + T * R * gdExp(-voutTemp) + voutOld * R * C + T * (gdExpDiff(voutTemp) * R * voutTemp - R * gdExp(voutTemp) + vin);
             vDenom = T * R * gdExpDiff(voutTemp) + T * R * gdExpDiff(-voutTemp) + R * C + T;
@@ -218,27 +200,23 @@ void DiodeClipperNRAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer
             itter++;
         }
         //myfile << "1 \n";
-        //juce::Logger::getCurrentLogger()->outputDebugString("OUT");
+        //juce::Logger::getCurrentLogger()->outputDebugString(std::to_string(itter));
         voutOld = vout;
         
         blockOutput[sample] = limiter(vout);
 
     }
-
     // Downsample and filter output from process
     for (int sample = 0; sample < blockOutputDownsampled.size(); ++sample)
     {
-//      y(i) = beta∗x(i) + (1 - beta)∗y(i - 1)
-        blockOutputDownsampled[sample] = blockOutput[sample * oversample]; //beta * blockOutput[sample*oversample] + betaM1 * oldBlockOutput;
-        //oldBlockOutput = blockOutputDownsampled[sample];
+        blockOutputDownsampled[sample] = blockOutput[sample * oversample]; 
     }
-    oldBlockOutput = 0;
 
     // Output to buffer
     for (int sample = 0; sample < blockOutputDownsampled.size(); ++sample)
     {
         buffer.setSample(0, sample, blockOutputDownsampled[sample]);
-        buffer.setSample(1, sample, blockOutputDownsampled[sample]);
+        //buffer.setSample(1, sample, blockOutputDownsampled[sample]);
     }
 
 }
@@ -254,30 +232,31 @@ void DiodeClipperNRAudioProcessor::parameterChanged(const juce::String& paramete
         controlledR = newValue;
     }
 }
+
 void DiodeClipperNRAudioProcessor::updateFilter()
 {
-    float frequency = 48e3 * 16;
+    float frequency = 48e3 * 16.0;
 
-    *lowPassFilter.state = *juce::dsp::IIR::Coefficients<float>::makeLowPass(frequency, frequency / 16);
+    *lowPassFilter.state = *juce::dsp::IIR::Coefficients<float>::makeLowPass(frequency, frequency / 16.0);
 }
-double DiodeClipperNRAudioProcessor::gdExp(double vc)
+float DiodeClipperNRAudioProcessor::gdExp(float vc)
 {
-    return Id * (std::exp(vc / (2 * Ve)) - 1);
+    return Id * (std::exp(vc / (2.0 * Ve)) - 1.0);
 }
-double DiodeClipperNRAudioProcessor::gdExpDiff(double vc)
+float DiodeClipperNRAudioProcessor::gdExpDiff(float vc)
 {
-    return (Id * std::exp(vc / (2 * Ve))) / (2 * Ve);
+    return (Id * std::exp(vc / (2.0 * Ve))) / (2.0 * Ve);
 }
-double DiodeClipperNRAudioProcessor::limiter(double val)
+float DiodeClipperNRAudioProcessor::limiter(float val)
 {
-    if (val < -1)
+    if (val < -1.0)
     {
-        val = -1;
+        val = -1.0;
         return val;
     }
-    else if (val > 1)
+    else if (val > 1.0)
     {
-        val = 1;
+        val = 1.0;
         return val;
     }
     return val;

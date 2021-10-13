@@ -58,20 +58,21 @@ public:
     //void setVt(double val) { controlledR = val; };
     void parameterChanged(const juce::String& parameterID, float newValue);
     void updateFilter();
-    double gdExp(double vc);
-    double gdExpDiff(double vc);
-    double limiter(double val);
+    float gdExp(float vc);
+    float gdExpDiff(float vc);
+    float limiter(float val);
+
     std::unique_ptr<juce::dsp::Oversampling<float>> oversampling;
     juce::AudioProcessorValueTreeState audioTree;
 
 private:
-    double controlledR;
-    double Id, C, Ve, Vp, R, err;
-    double Fs, T;
-    double vNom, vDenom;
-    double vin;
-    double vout, voutTemp, voutOld;
-    double beta, betaM1;
+    float controlledR;
+    float Id, C, Ve, Vp, R, err;
+    float Fs, T;
+    float vNom, vDenom;
+    float vin;
+    float vout, voutTemp, voutOld;
+    float beta, betaM1;
     std::ofstream myfile;
     int oversample;
     std::vector<float> blockInput, blockOutput, blockOutputDownsampled;
